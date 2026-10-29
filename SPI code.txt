@@ -16,7 +16,7 @@ module spi_sim (
     output reg [7:0] tx_shift_reg
 );
 
-    // Synchronize external SPI inputs
+   
     reg [2:0] sclk_sync;
     reg [1:0] cs_sync;
     reg [1:0] mosi_sync;
@@ -37,7 +37,7 @@ module spi_sim (
     wire rise = (sclk_sync[2:1] == 2'b01);
     wire fall = (sclk_sync[2:1] == 2'b10);
 
-    // Determine leading and trailing edges
+    
     wire leading_edge  = cpol ? fall : rise;
     wire trailing_edge = cpol ? rise : fall;
 
@@ -45,10 +45,7 @@ module spi_sim (
     wire sample_edge = cpha ? trailing_edge : leading_edge;
     wire change_edge = cpha ? leading_edge  : trailing_edge;
 
-    // MISO is driven only when selected.
-    // For CPHA=0, the first bit is already loaded.
-    // For CPHA=1, the first bit is also available by
-    // the first trailing (sampling) edge.
+   
     assign hdo = (!cs_sync[1]) ? tx_shift_reg[7] : 1'b0;
 
     always @(posedge clk or posedge rst) begin
@@ -60,7 +57,7 @@ module spi_sim (
             tx_shift_reg <= 8'd0;
         end
         else if (cs_sync[1]) begin
-            // Reload transmit byte while deselected
+            
             clk_count    <= 4'd0;
             shift_reg    <= 8'd0;
             data_valid   <= 1'b0;
@@ -69,7 +66,7 @@ module spi_sim (
         else begin
             data_valid <= 1'b0;
 
-            // Receive MOSI on the sampling edge
+            
             if (sample_edge) begin
                 shift_reg <= {shift_reg[6:0], mosi_sync[1]};
 
@@ -83,9 +80,7 @@ module spi_sim (
                 end
             end
 
-            // Advance transmitted data on the change edge.
-            // clk_count=0 means the first bit has not yet
-            // been sampled, so retain the initial MSB.
+           
             if (change_edge && clk_count != 4'd0) begin
                 tx_shift_reg <= {tx_shift_reg[6:0], 1'b0};
             end
