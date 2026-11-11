@@ -1,0 +1,142 @@
+module spi_master #(
+    parameter CLK_DIV     = 4,    
+    parameter CPOL        = 0,
+    parameter CPHA        = 0,
+    parameter TOTAL_BYTES = 128   
+)(
+    input            clk,
+    input            rst,
+
+    // Byte input interface
+    input      [7:0] data_in,
+    input            data_in_valid,
+    output           data_in_ready,
+
+    // SPI bus (to SPI slave)
+    output reg       sclk,
+    output reg       cs,          
+    output reg       mosi,
+    input            miso,
+
+    // Status 
+    output reg [7:0] rx_data,
+    output reg       rx_valid,
+    output           busy,
+    output reg [7:0] byte_count,  
+    output           all_done     
+);
+
+    localparam [2:0] S_IDLE  = 3'd0,
+                     S_SETUP = 3'd1,
+                     S_XFER  = 3'd2,
+                     S_TAIL  = 3'd3,
+                     S_CSHI  = 3'd4;
+
+    reg [2:0] state;
+    reg [7:0] div_cnt;
+    reg [3:0] edge_cnt;   
+    reg [7:0] tx_data;
+    reg [7:0] rx_shift;
+
+    assign all_done      = (byte_count == TOTAL_BYTES);
+    assign data_in_ready = (state == S_IDLE) && !all_done;
+    assign busy          = (state != S_IDLE);
+
+    wire       tick       = (div_cnt == CLK_DIV-1);
+    wire       is_leading = ~edge_cnt[0];                 
+    wire       sample_now = (CPHA == 0) ? is_leading : ~is_leading;
+    wire [3:0] tx_idx     = (CPHA == 0) ? (edge_cnt[3:1] + 4'd1)
+                                        : {1'b0, edge_cnt[3:1]};
+
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            state      <= S_IDLE;
+            div_cnt    <= 8'd0;
+            edge_cnt   <= 4'd0;
+            sclk       <= (CPOL != 0);
+            cs         <= 1'b1;
+            mosi       <= 1'b0;
+            tx_data    <= 8'd0;
+            rx_shift   <= 8'd0;
+            rx_data    <= 8'd0;
+            rx_valid   <= 1'b0;
+            byte_count <= 8'd0;
+        end
+        else begin
+            rx_valid <= 1'b0;
+
+            case (state)
+          
+            S_IDLE: begin
+                if (data_in_valid && !all_done) begin
+                    tx_data  <= data_in;
+                    edge_cnt <= 4'd0;
+                    div_cnt  <= 8'd0;
+                    if (CPHA == 0) mosi <= data_in[7]; 
+                    if (cs) begin                      
+                        cs    <= 1'b0;
+                        state <= S_SETUP;
+                    end
+                    else
+                        state <= S_XFER;              
+                end
+            end
+
+                       S_SETUP: begin
+                if (tick) begin
+                    div_cnt <= 8'd0;
+                    state   <= S_XFER;
+                end
+                else div_cnt <= div_cnt + 1'b1;
+            end
+
+           
+            S_XFER: begin
+                if (tick) begin
+                    div_cnt  <= 8'd0;
+                    sclk     <= ~sclk;
+                    edge_cnt <= edge_cnt + 1'b1;
+
+                    if (sample_now)
+                        rx_shift <= {rx_shift[6:0], miso};
+                    else if (tx_idx <= 4'd7)
+                        mosi <= tx_data[3'd7 - tx_idx[2:0]];
+
+                    if (edge_cnt == 4'd15)
+                        state <= S_TAIL;
+                end
+                else div_cnt <= div_cnt + 1'b1;
+            end
+
+          
+            S_TAIL: begin
+                if (tick) begin
+                    div_cnt    <= 8'd0;
+                    rx_data    <= rx_shift;
+                    rx_valid   <= 1'b1;
+                    byte_count <= byte_count + 1'b1;
+
+                    if (byte_count[1:0] == 2'b11) begin  
+                        cs    <= 1'b1;
+                        mosi  <= 1'b0;
+                        state <= S_CSHI;
+                    end
+                    else state <= S_IDLE;
+                end
+                else div_cnt <= div_cnt + 1'b1;
+            end
+
+
+            S_CSHI: begin
+                if (tick) begin
+                    div_cnt <= 8'd0;
+                    state   <= S_IDLE;
+                end
+                else div_cnt <= div_cnt + 1'b1;
+            end
+
+            default: state <= S_IDLE;
+            endcase
+        end
+    end
+endmodule
